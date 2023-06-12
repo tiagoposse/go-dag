@@ -4,7 +4,7 @@
 // between them. dag.ring Run, the dag.rected acyclec graph will be validated and each vertex
 // will run in parallel as soon as it's dag.pendencies have been resolved. The Runner will only
 // return after all running goroutines have stopped.
-package dag
+package graph
 
 import (
 	"encoding/json"
@@ -15,7 +15,8 @@ import (
 )
 
 var errMissingVertex = errors.New("missing vertex")
-var errCycleDetected = errors.New("dependency cycle dag.tected")
+var errCycleDetected = errors.New("dependency cycle detected")
+var errGraphExecError = errors.New("traversing the graph")
 
 func NewDAG(opts ...Option) *DAG {
 	dag := &DAG{
@@ -23,6 +24,7 @@ func NewDAG(opts ...Option) *DAG {
 		graph:       make(map[string][]string),
 		fns:         make(map[string]func() error),
 		debugFn:     func(msg string) {},
+		errors:      make(map[string]error),
 	}
 
 	for _, o := range opts {
@@ -36,15 +38,25 @@ type DAG struct {
 	maxParallel int
 	graph       map[string][]string
 	fns         map[string]func() error
+	errors      map[string]error
+	debugFn     func(string)
+}
 
-	debugFn func(string)
+func (dag *DAG) HasVertex(vertex string) bool {
+	_, ok := dag.graph[vertex]
+	return ok
+}
+
+func (dag *DAG) Errors() map[string]error {
+	return dag.errors
 }
 
 func (dag *DAG) AddVertex(vertex string, fn func() error) bool {
-	dag.debugFn(fmt.Sprintf("Add vertex %s", vertex))
 	if _, ok := dag.fns[vertex]; !ok {
 		dag.fns[vertex] = fn
-		dag.graph[vertex] = []string{}
+		if dag.graph[vertex] == nil {
+			dag.graph[vertex] = []string{}
+		}
 		return true
 	}
 
@@ -156,7 +168,7 @@ func (dag *DAG) Run() error {
 	for done < len(dag.graph) {
 		newQueue := []string{}
 		for _, vertex := range runQueue {
-			if dag.maxParallel = 0 || running < dag.maxParallel {
+			if dag.maxParallel == 0 || running < dag.maxParallel {
 				running++
 				dag.start(vertex, resc)
 			} else {
@@ -170,6 +182,7 @@ func (dag *DAG) Run() error {
 
 		// don't enqueue any more work on if there's been an error
 		if res.err != nil {
+			dag.errors[res.name] = res.err
 			break
 		}
 
@@ -188,6 +201,10 @@ func (dag *DAG) Run() error {
 		running--
 	}
 
+	if len(dag.errors) > 0 {
+		return errGraphExecError
+	}
+
 	return nil
 }
 
@@ -195,6 +212,7 @@ func (dag *DAG) start(name string, resc chan<- result) {
 	encapsulateError := func() error {
 		var err error
 		if err = dag.fns[name](); err != nil {
+			fmt.Println(err)
 			err = fmt.Errorf("%s: %w", name, err)
 		}
 		return err

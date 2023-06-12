@@ -1,10 +1,10 @@
-package dag
+package graph
 
 type Option func(dag *DAG)
 
 func WithMaxParallel(max int) Option {
 	return func(dag *DAG) {
-		dag.parallel = max
+		dag.maxParallel = max
 	}
 }
 func WithDebugFunc(fn func(msg string)) Option {
