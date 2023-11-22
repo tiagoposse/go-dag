@@ -4,7 +4,7 @@
 // between them. dag.ring Run, the dag.rected acyclec graph will be validated and each vertex
 // will run in parallel as soon as it's dag.pendencies have been resolved. The Runner will only
 // return after all running goroutines have stopped.
-package graph
+package dag
 
 import (
 	"encoding/json"
@@ -24,7 +24,7 @@ func NewDAG(opts ...Option) *DAG {
 		graph:       make(map[string][]string),
 		fns:         make(map[string]func() error),
 		debugFn:     func(msg string) {},
-		errors:      make(map[string]error),
+		errors:      make(map[string]string),
 	}
 
 	for _, o := range opts {
@@ -38,16 +38,16 @@ type DAG struct {
 	maxParallel int
 	graph       map[string][]string
 	fns         map[string]func() error
-	errors      map[string]error
+	errors      map[string]string
 	debugFn     func(string)
 }
 
 func (dag *DAG) HasVertex(vertex string) bool {
-	_, ok := dag.graph[vertex]
+	_, ok := dag.fns[vertex]
 	return ok
 }
 
-func (dag *DAG) Errors() map[string]error {
+func (dag *DAG) Errors() map[string]string {
 	return dag.errors
 }
 
@@ -84,6 +84,8 @@ func (dag *DAG) detectCycles() bool {
 	for vertex := range dag.graph {
 		if !visited[vertex] {
 			if dag.detectCyclesHelper(vertex, visited, recStack) {
+				fmt.Println("cycle in " + vertex)
+				dag.PrettyPrintGraph()
 				return true
 			}
 		}
@@ -105,7 +107,6 @@ func (dag *DAG) detectCyclesHelper(vertex string, visited, recStack map[string]b
 		} else if recStack[v] {
 			return true
 		}
-
 	}
 	recStack[vertex] = false
 	return false
@@ -182,7 +183,7 @@ func (dag *DAG) Run() error {
 
 		// don't enqueue any more work on if there's been an error
 		if res.err != nil {
-			dag.errors[res.name] = res.err
+			dag.errors[res.name] = res.err.Error()
 			break
 		}
 
@@ -211,9 +212,12 @@ func (dag *DAG) Run() error {
 func (dag *DAG) start(name string, resc chan<- result) {
 	encapsulateError := func() error {
 		var err error
+
 		if err = dag.fns[name](); err != nil {
-			fmt.Println(err)
+			dag.debugFn(fmt.Sprintf("Finished %s with error", name))
 			err = fmt.Errorf("%s: %w", name, err)
+		} else {
+			dag.debugFn(fmt.Sprintf("Finished %s", name))
 		}
 		return err
 	}
